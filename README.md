@@ -1,87 +1,104 @@
-# NLP Sentiment Analysis + Content Recommender
+# Core ML Image Classifier
 
-A small Python project I built while learning NLP and recommendation systems
-with scikit-learn. It has two pieces:
+A small, modular Python project demonstrating a mobile-first image
+classification pipeline built around MobileNetV2:
 
-1. **`SentimentAnalyzer`** – a TF-IDF + Logistic Regression classifier that
-   labels text as positive or negative.
-2. **`ContentRecommender`** – a TF-IDF cosine-similarity recommender that
-   can optionally blend in sentiment scores so highly-rated items get a
-   small ranking boost.
-
-The two pieces work together in `main.py`: the analyzer scores each item's
-review, and the recommender uses those scores to bias its rankings.
+- **`ImageClassifier`** — a MobileNetV2 classifier that returns top-k
+  ImageNet predictions with confidence scores and provides a one-call
+  export to Core ML for on-device iOS/macOS deployment.
+- **`ImageIndexer`** — a content-based image retrieval index that
+  reuses the MobileNetV2 backbone as a feature extractor and ranks
+  candidates by cosine similarity over 1280-dimensional embeddings.
 
 ## Migration Note
 
-This repository contains consolidated research and algorithmic logic from
-my 2024-2025 AI/ML focus period. It has been moved to this public repo to
-serve as a technical portfolio for on-device and backend intelligence
-patterns.
+This repository contains consolidated research and algorithmic logic from my
+2024-2025 AI/ML focus period. It has been moved to this public repo to serve
+as a technical portfolio for on-device and backend intelligence patterns.
 
 ## Project Structure
 
 ```
-.
-├── data/                       # sample CSV datasets
-│   ├── sample_reviews.csv
-│   └── sample_items.csv
-├── models/                     # trained models get saved here
-├── src/                        # the actual classes
+core_ml_image_classifier/
+├── data/                     # Sample catalogue and generated demo images
+│   ├── catalogue.csv
+│   └── images/
+├── models/                   # Persisted weights and Core ML bundles (runtime)
+├── src/                      # Library code
 │   ├── __init__.py
-│   ├── sentiment_analyzer.py
-│   └── content_recommender.py
-├── tests/                      # pytest tests for both classes
-│   ├── __init__.py
-│   ├── test_sentiment_analyzer.py
-│   └── test_content_recommender.py
-├── main.py                     # entry point that ties everything together
+│   ├── image_classifier.py
+│   └── image_indexer.py
+├── tests/                    # Pytest suite
+│   ├── test_image_classifier.py
+│   └── test_image_indexer.py
+├── main.py                   # Runnable demo entry point
 ├── requirements.txt
 └── README.md
 ```
 
-## Setup
+## Getting Started
 
 ```bash
+cd core_ml_image_classifier
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Running
+## Running the Demo
 
 ```bash
 python main.py
 ```
 
-This will:
-1. Train the sentiment model on `data/sample_reviews.csv`
-2. Save the trained model to `models/sentiment_model.joblib`
-3. Score each item in `data/sample_items.csv` with the trained model
-4. Build the recommender and print a few example recommendations
+This generates a small set of synthetic colour-tile images under
+`data/images/`, classifies each one with MobileNetV2, saves the PyTorch
+weights to `models/mobilenet_v2.pt`, then fits an `ImageIndexer` over
+`data/catalogue.csv` and prints nearest-neighbour recommendations for a
+seed item and a query image.
 
 ## Running the Tests
 
 ```bash
-pytest -v
+pytest
 ```
 
-## Things I Learned Building This
+## Programmatic Usage
 
-- Wrapping the vectorizer and classifier in a single `Pipeline` removes a
-  whole class of bugs where I forgot to transform the input the same way
-  twice.
-- `predict_proba` returns columns in the order of `classifier.classes_`,
-  which is alphabetical by default – not the order I passed labels in.
-  I had to look up the index of `"positive"` rather than assuming it was 0 or 1.
-- Cosine similarity on TF-IDF vectors is a surprisingly strong baseline
-  for content-based recommendations on small catalogs.
-- Blending sentiment with similarity is a heuristic, not a real model –
-  but it's a useful one when you don't have user interaction data yet.
+```python
+from src import ImageClassifier, ImageIndexer
 
-## Notes / Caveats
+classifier = ImageClassifier()
+classifier.classify("cat.jpg", top_k=3)
+# [("tabby, tabby cat", 0.78), ("Egyptian cat", 0.12), ("tiger cat", 0.05)]
 
-- The included datasets are tiny and synthetic. They're enough to
-  demonstrate the pipeline but not enough to produce a meaningful
-  accuracy number.
-- This is a learning project, so the focus is on clarity over performance.
+classifier.export_to_coreml("models/mobilenet_v2.mlpackage")
+
+indexer = ImageIndexer(classifier=classifier)
+indexer.fit(
+    ["tabby", "labrador"],
+    ["images/cat.jpg", "images/dog.jpg"],
+)
+indexer.recommend_from_image("images/query.jpg")
+```
+
+## Design Notes
+
+- Classes follow a `fit` / `predict`-style API that mirrors
+  scikit-learn so they compose cleanly with the rest of the ML
+  ecosystem.
+- Preprocessing, model weights, and inference are kept inside the
+  classifier, while I/O boundaries (image loading, CSV parsing, model
+  persistence) stay at the edges so the core classes remain small and
+  easy to test.
+- `ImageClassifier.extract_features` exposes the 1280-D penultimate
+  embedding so the indexer can reuse the same forward pass without
+  duplicating the backbone.
+- `ImageClassifier.export_to_coreml` bakes the ImageNet preprocessing
+  into the exported model so the Swift call site can hand a
+  `CVPixelBuffer` straight through, keeping the on-device integration
+  minimal and the inference loop free of per-frame Python-equivalent
+  work.
+- The similarity index is a readable baseline rather than a production
+  visual-search system; it is a useful starting point for richer
+  retrieval strategies such as ANN indexes or learned re-rankers.

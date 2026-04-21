@@ -1,93 +1,78 @@
-"""
-Entry point for the project.
-
-This script:
-  1. Loads the sample review data
-  2. Trains the SentimentAnalyzer and saves the model
-  3. Loads the sample item catalog
-  4. Scores each item's review with the trained model
-  5. Builds the ContentRecommender and prints recommendations
-
-I wanted main.py to be runnable end-to-end so that anyone cloning the
-repo can just do `python main.py` and see the whole thing work.
-"""
+"""Entry point demonstrating the ImageClassifier and ImageIndexer."""
 
 import os
-import pandas as pd
 
-from src.sentiment_analyzer import SentimentAnalyzer
-from src.content_recommender import ContentRecommender
+from PIL import Image
 
+from src.image_classifier import ImageClassifier
+from src.image_indexer import ImageIndexer
 
-REVIEWS_PATH = os.path.join("data", "sample_reviews.csv")
-ITEMS_PATH = os.path.join("data", "sample_items.csv")
-MODEL_PATH = os.path.join("models", "sentiment_model.joblib")
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+IMAGES_DIR = os.path.join(DATA_DIR, "images")
+CATALOGUE_PATH = os.path.join(DATA_DIR, "catalogue.csv")
+WEIGHTS_PATH = os.path.join(PROJECT_ROOT, "models", "mobilenet_v2.pt")
 
-
-def train_sentiment_model():
-    """Load reviews, train the analyzer, save it, and return the trained one."""
-    print("=== Step 1: Training sentiment model ===")
-    df = pd.read_csv(REVIEWS_PATH)
-    print("Loaded", len(df), "reviews from", REVIEWS_PATH)
-
-    analyzer = SentimentAnalyzer()
-    results = analyzer.train(df["text"].tolist(), df["label"].tolist())
-
-    print("Test accuracy:", round(results["accuracy"], 3))
-    print("Classification report:\n", results["report"])
-
-    analyzer.save(MODEL_PATH)
-    print("Saved model to", MODEL_PATH)
-    return analyzer
+SAMPLE_IMAGES = {
+    "red_tile.jpg": (220, 30, 30),
+    "blue_tile.jpg": (30, 30, 220),
+    "green_tile.jpg": (30, 220, 30),
+    "yellow_tile.jpg": (220, 220, 30),
+    "query.jpg": (230, 40, 40),
+}
 
 
-def build_recommender(analyzer):
-    """Score items with the analyzer, then fit the recommender."""
-    print("\n=== Step 2: Scoring items with sentiment model ===")
-    items = pd.read_csv(ITEMS_PATH)
-    print("Loaded", len(items), "items from", ITEMS_PATH)
+def ensure_sample_images() -> None:
+    """Create the demo colour-tile images on first run."""
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    for name, color in SAMPLE_IMAGES.items():
+        path = os.path.join(IMAGES_DIR, name)
+        if not os.path.exists(path):
+            Image.new("RGB", (224, 224), color).save(path)
 
-    # For each item, run the review through the sentiment model to get
-    # a positive-ness score. This becomes the bias signal for the recommender.
-    sentiment_scores = []
-    for review in items["review"].tolist():
-        score = analyzer.predict_score(review)
-        sentiment_scores.append(score)
 
-    items["sentiment_score"] = sentiment_scores
-    print(items[["item_id", "sentiment_score"]].to_string(index=False))
+def run_classifier_demo(classifier: ImageClassifier) -> None:
+    """Classify the demo images and print the top predictions for each."""
+    print("=== Image Classification ===")
+    samples = ["red_tile.jpg", "blue_tile.jpg", "green_tile.jpg"]
+    for name in samples:
+        path = os.path.join(IMAGES_DIR, name)
+        print(f"\n{name}")
+        for label, confidence in classifier.classify(path, top_k=3):
+            print(f"  {confidence:.3f}  {label}")
 
-    print("\n=== Step 3: Fitting recommender ===")
-    recommender = ContentRecommender(sentiment_weight=0.3)
-    recommender.fit(
-        item_ids=items["item_id"].tolist(),
-        descriptions=items["description"].tolist(),
-        sentiment_scores=sentiment_scores,
+    classifier.save(WEIGHTS_PATH)
+    print(f"\nSaved weights to {WEIGHTS_PATH}")
+
+
+def run_indexer_demo(classifier: ImageClassifier) -> None:
+    """Build the indexer over the demo catalogue and print recommendations."""
+    print("\n=== Image Retrieval ===")
+    items, relative_paths = ImageIndexer.from_csv(
+        CATALOGUE_PATH, "item", "image"
     )
-    return recommender
+    image_paths = [os.path.join(DATA_DIR, path) for path in relative_paths]
+
+    indexer = ImageIndexer(classifier=classifier)
+    indexer.fit(items, image_paths)
+
+    seed = items[0]
+    print(f"Items visually similar to '{seed}':")
+    for item, score in indexer.recommend(seed, top_k=3):
+        print(f"  {score:.3f}  {item}")
+
+    query_path = os.path.join(IMAGES_DIR, "query.jpg")
+    print(f"\nRecommendations for query image 'query.jpg':")
+    for item, score in indexer.recommend_from_image(query_path, top_k=3):
+        print(f"  {score:.3f}  {item}")
 
 
-def show_recommendations(recommender, query_id, top_k=3):
-    """Print recommendations for a given item id."""
-    print("\n=== Recommendations for", query_id, "===")
-    results = recommender.recommend(query_id, top_k=top_k)
-    for r in results:
-        print(
-            "  ->", r["item_id"],
-            "| score:", r["score"],
-            "| similarity:", r["similarity"],
-        )
-
-
-def main():
-    """Glue everything together."""
-    analyzer = train_sentiment_model()
-    recommender = build_recommender(analyzer)
-
-    # Try a couple of queries so we can see different behavior
-    show_recommendations(recommender, "item_01", top_k=3)
-    show_recommendations(recommender, "item_04", top_k=3)
-    show_recommendations(recommender, "item_06", top_k=3)
+def main() -> None:
+    """Run both demos end to end."""
+    ensure_sample_images()
+    classifier = ImageClassifier()
+    run_classifier_demo(classifier)
+    run_indexer_demo(classifier)
 
 
 if __name__ == "__main__":

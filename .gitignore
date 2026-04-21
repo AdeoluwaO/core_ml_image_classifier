@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
-*.joblib
+*.pt
+*.mlmodel
+*.mlpackage/
 .pytest_cache/
 .DS_Store

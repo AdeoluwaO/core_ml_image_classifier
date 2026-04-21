@@ -1,1 +1,6 @@
-# makes the src folder a package so we can import stuff from it
+"""Core ML image classification and retrieval package."""
+
+from src.image_classifier import ImageClassifier
+from src.image_indexer import ImageIndexer
+
+__all__ = ["ImageClassifier", "ImageIndexer"]
